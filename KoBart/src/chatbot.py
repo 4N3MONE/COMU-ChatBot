@@ -14,4 +14,4 @@ class Chatbot:
         outputs = self.model.generate(inputs)
         answer = self.tokenizer.batch_decode(outputs.tolist())[0]
         answer = answer.replace('<s>', '').replace('</s>', '')
-        return answer  
+        return answer
