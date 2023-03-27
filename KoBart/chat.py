@@ -6,5 +6,5 @@ if __name__=='__main__':
         query = input('대화를 입력하세요: ').strip()
         if query == 'q':
             break
-        answer = chatbot.chat(query)
+        answer = chatbot.chat('₩청자₩ ' +query)
         print(f'chatbot: {answer}')
