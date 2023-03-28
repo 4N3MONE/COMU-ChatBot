@@ -5,11 +5,11 @@ import torch
 from torch.utils.data import DataLoader
 import pandas as pd
 import argparse
-
+from dataloader import load_data
 
 def gpt_train(args):
-    # model  = AutoModelForCausalLM.from_pretrained(args.model_checkpoint)
-    # tokenizer = AutoTokenizer.from_pretrained(args.model_checkpoint, use_fast=True, stride=128)
+    model  = AutoModelForCausalLM.from_pretrained(args.model_checkpoint)
+    tokenizer = AutoTokenizer.from_pretrained(args.model_checkpoint, use_fast=True, stride=128)
     
     model.config.max_length = args.max_target_length
     tokenizer.model_max_length = args.max_target_length
@@ -23,51 +23,58 @@ if __name__ == '__main__':
                         help='max input length for dialog')
     parser.add_argument('--max_target_length', default=30, type=int,
                     help='max target length for dialog')
-    parser.add_argument('--train_batch_size', default=4, type=int,
+    parser.add_argument('--train_batch_size', default=8, type=int,
                                             help='train batch size')
-    parser.add_argument('--num_train_epochs', default=1, type=int,
+    parser.add_argument('--eval_batch_size', default=8, type=int,
+                                            help='eval batch size')
+    parser.add_argument('--num_train_epochs', default=10, type=int,
                                             help='train epoch size')
     parser.add_argument('--lr', default=5e-5, type=int,
                                             help='learning rate for training')
     parser.add_argument('--wd', default=0.01, type=int,
                                             help='weight decay for training'),
+    parser.add_argument('--steps', default=3000, type=int,
+                        help='evaluation, logging, saving step for training')
     parser.add_argument('--model_name', default='skt/ko-gpt-trinity-1.2B-v0.5', type=str,
                                             help='model name for saving')
-    parser.add_argument('--base_path', default='../data/data_test.tsv', type=str,
-                                                help='dataset path')
+    parser.add_argument('--base_path', default='../data/data_final.tsv', type=str,
+                                            help='dataset path')
     parser.add_argument('--model_path', default='./output', type=str,
-                                                help='model path for saving')
+                                            help='model path for saving')
 
     args = parser.parse_args()
     
     #Load dataset
-    dataset = pd.read_csv(args.base_path,sep='\t')
-    tokenized_dataset = ChatDataset(dataset)
+    dataset = load_data(args.base_path)
+    tokenized_dataset_train = ChatDataset(dataset['train'])
+    
+    tokenized_dataset_eval = ChatDataset(dataset['test'])
     # batched_dataset = ChatDataLoader(tokenized_dataset, args.train_batch_size)
-    model = AutoModelForCausalLM.from_pretrained(args.model_checkpoint)
-    tokenizer = AutoTokenizer.from_pretrained(args.model_checkpoint, use_fast=True, stride=128)
+    model, tokenizer = gpt_train(args)
     data_collator = DataCollatorForLanguageModeling(tokenizer, mlm=False,return_tensors='pt')
-
+    
 
     training_args = TrainingArguments(
         output_dir = args.model_path,
+        evaluation_strategy='steps', eval_steps = args.steps,
+        logging_strategy='steps', logging_steps=args.steps,
+        save_strategy='steps', save_steps=args.steps,
         save_total_limit=1,
         num_train_epochs=args.num_train_epochs,
         per_device_train_batch_size=args.train_batch_size,
-        save_steps=1000,
+        per_device_eval_batch_size=args.eval_batch_size,
         learning_rate=args.lr,
         weight_decay=args.wd,
         warmup_steps=3000,
-        logging_steps=1000,
-        save_strategy="epoch",
-        load_best_model_at_end=False, 
+        load_best_model_at_end=True,
+        fp16=True 
     )
     
     trainer = Trainer(
         model = model,
         args=training_args,
-        train_dataset=tokenized_dataset,
-        eval_dataset=None,
+        train_dataset=tokenized_dataset_train,
+        eval_dataset=tokenized_dataset_eval,
         data_collator=data_collator,
         tokenizer=tokenizer,
     )

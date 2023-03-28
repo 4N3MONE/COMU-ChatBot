@@ -1,18 +1,19 @@
-from torch.utils.data import DataLoader,Dataset
 import torch
 import pandas as pd
 from transformers import PreTrainedTokenizerFast
 import numpy as np
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
 from transformers import AutoTokenizer,AutoModelForCausalLM,PreTrainedTokenizerFast
+
+
 
 model_name = 'skt/ko-gpt-trinity-1.2B-v0.5'
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 model = AutoModelForCausalLM.from_pretrained(model_name)
 file_path = '../data/data_final.tsv'
-
 data = pd.read_csv(file_path, sep = '\t')
+
 
 
 U_TKN = '<usr>'
@@ -21,14 +22,13 @@ BOS = '</s>'
 EOS = '</s>'
 MASK = '<unused0>'
 PAD = '<pad>'
-model_name = 'skt/ko-gpt-trinity-1.2B-v0.5'
 
 TOKENIZER = PreTrainedTokenizerFast.from_pretrained(model_name,
             bos_token=BOS, eos_token=EOS, unk_token='<unk>',
             pad_token=PAD, mask_token=MASK)
 
 class ChatDataset(Dataset):
-    def __init__(self, chats, max_len=50):
+    def __init__(self, chats, max_len=30):
         self._data = chats
         self.first = True
         self.q_token = U_TKN
@@ -44,7 +44,7 @@ class ChatDataset(Dataset):
         return len(self._data)
 
     def __getitem__(self, idx):
-        turn = self._data.iloc[idx]
+        turn = self._data.select(list([idx]))
         q = turn['title']
         a = turn['comment']
         q_toked = self.tokenizer.tokenize(self.q_token + str(q))                                   
