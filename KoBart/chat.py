@@ -30,4 +30,5 @@ def generate_from_file(chatbot, input_file_path, output_file_path):
 if __name__=='__main__':
     chatbot = Chatbot()
     #sequancially_chat(chatbot)
-    generate_from_file(chatbot, 'temp.txt', 'temp_output.txt')
+    #generate_from_file(chatbot, 'temp.txt', 'temp_output.txt')
+    #result = iteratively_generate(chatbot, input_texts)
