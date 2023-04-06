@@ -89,7 +89,7 @@ class ChatDataset(Dataset):
 
     def __getitem__(self, index):
         record = self.data.iloc[index]
-        q, a = record['title'], record['comment']
+        q, a = record['Q'], record['A']
         q_tokens = [self.bos_token] + \
             self.tokenizer.tokenize(q) + [self.eos_token]
         a_tokens = [self.bos_token] + \
