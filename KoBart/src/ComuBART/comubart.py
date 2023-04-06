@@ -3,7 +3,7 @@ import pytorch_lightning as pl
 
 class ComuBART(pl.LightningModule):
     def __init__(self, model_path):
-        super().__init__()
+        super(ComuBART, self).__init__()
         self.model = get_kobart_model(model_path)
     
     def generate(self, inputs):
