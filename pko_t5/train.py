@@ -17,7 +17,7 @@ if __name__ == '__main__':
                                                 help='train batch size')
     parser.add_argument('--eval_batch_size', default=8, type=int,
                                                 help='eval batch size')
-    parser.add_argument('--num_train_epochs', default=20, type=int,
+    parser.add_argument('--num_train_epochs', default=100, type=int,
                                                 help='train epoch size')
     parser.add_argument('--lr', default=7e-4, type=int,
                                                 help='learning rate for training')
@@ -27,9 +27,9 @@ if __name__ == '__main__':
                                                 help='evaluation, logging, saving step for training')                                            
     parser.add_argument('--model_name', default='paust/pko-t5-base', type=str,
                                                 help='model name for saving')
-    parser.add_argument('--base_path', default='./final_data.csv', type=str,
+    parser.add_argument('--base_path', default='./data/comuchat.csv', type=str,
                                                 help='dataset path')
-    parser.add_argument('--model_path', default='./experiment1', type=str,
+    parser.add_argument('--model_path', default='./pko_t5_experiment1', type=str,
                                                 help='model path for saving')
     args = parser.parse_args()
 
@@ -56,6 +56,8 @@ if __name__ == '__main__':
     training_args = Seq2SeqTrainingArguments(
         output_dir = args.model_path,
         save_total_limit=1,
+        early_stopping_patience=5,
+        evaluation_strategy = "epoch",
         num_train_epochs=args.num_train_epochs,
         per_device_train_batch_size=args.train_batch_size,
         save_steps=1000,
@@ -64,7 +66,8 @@ if __name__ == '__main__':
         warmup_steps=3000,
         logging_steps=1000,
         save_strategy="no",
-        load_best_model_at_end=True, 
+        load_best_model_at_end=True,
+        metric_for_best_model="eval_loss", 
     )
     
     trainer = Seq2SeqTrainer(
