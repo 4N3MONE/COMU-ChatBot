@@ -7,6 +7,7 @@ import pandas as pd
 import pytorch_lightning as pl
 import torch
 from pytorch_lightning import loggers as pl_loggers
+from pytorch_lightning.callbacks import EarlyStopping
 from torch.utils.data import DataLoader, Dataset
 from transformers import (BartForConditionalGeneration,
                           PreTrainedTokenizerFast)
@@ -54,7 +55,7 @@ class ArgsBase():
                             help='')
         parser.add_argument('--max_seq_len',
                             type=int,
-                            default=36,
+                            default=30,
                             help='max seq len')
         return parser
 
@@ -285,6 +286,12 @@ if __name__ == '__main__':
                         os.path.join(args.tokenizer_path, 'model.json'),
                         max_seq_len=args.max_seq_len,
                         num_workers=args.num_workers)
+    early_stop_callback = EarlyStopping(
+        monitor='val_loss',
+        patience=5,
+        verbose=False,
+        mode='min'
+    )
     checkpoint_callback = pl.callbacks.ModelCheckpoint(monitor='val_loss',
                                                        dirpath=args.default_root_dir,
                                                        filename='model_chp/{epoch:02d}-{val_loss:.3f}',
@@ -296,7 +303,7 @@ if __name__ == '__main__':
     tb_logger = pl_loggers.TensorBoardLogger(os.path.join(args.default_root_dir, 'tb_logs'))
     lr_logger = pl.callbacks.LearningRateMonitor()
     trainer = pl.Trainer.from_argparse_args(args, logger=tb_logger,
-                                            callbacks=[checkpoint_callback, lr_logger])
+                                            callbacks=[checkpoint_callback, lr_logger, early_stop_callback])
     trainer.fit(model, dm)
     if args.chat:
         model.model.eval()
