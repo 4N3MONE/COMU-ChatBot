@@ -6,9 +6,9 @@ from sklearn.model_selection import train_test_split
 def load_data(path):    
     df = pd.read_csv(path)
     df_train, df_test = train_test_split(df, test_size = 0.1, random_state = 42, stratify = df['src'])
-    df_train = df_train[['title', 'comment']]
+    df_train = df_train[['Q', 'A']]
     df_train = df_train.reset_index(drop = True)
-    df_test = df_test[['title', 'comment']]
+    df_test = df_test[['Q', 'A']]
     df_test = df_test.reset_index(drop = True)
     
     df_train.title = 'qa question: ' + df_train.title
@@ -21,12 +21,12 @@ def load_data(path):
     return df_train, df_test
 
 def prepare_data(examples, tokenizer, args):
-    all_inputs = [i for i in examples['title'].tolist()]
+    all_inputs = [i for i in examples['Q'].tolist()]
     inputs = tokenizer(all_inputs, add_special_tokens=True, max_length=args.max_input_length, truncation=True, padding=True, return_tensors='np')
     input_ids = inputs.input_ids.tolist()
     attention_mask = inputs.attention_mask.tolist()
 
-    all_labels = [i for i in examples['comment'].tolist()]
+    all_labels = [i for i in examples['A'].tolist()]
     targets = tokenizer(all_labels, add_special_tokens=True, max_length=args.max_target_length, truncation=True, padding=True, return_tensors='np')
     labels = targets.input_ids
     labels[~targets.attention_mask] = -100
