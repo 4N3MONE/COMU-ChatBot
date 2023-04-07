@@ -11,8 +11,8 @@ def load_data(path):
     df_test = df_test[['Q', 'A']]
     df_test = df_test.reset_index(drop = True)
     
-    df_train.title = 'qa question: ' + df_train.title
-    df_test.title = 'qa question: ' + df_test.title
+    df_train.Q = 'qa question: ' + df_train.Q
+    df_test.Q = 'qa question: ' + df_test.Q
     
     print("=========data shape=========")
     print("Number of train Dataset: {}".format(df_train.shape))
