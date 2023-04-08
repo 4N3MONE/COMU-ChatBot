@@ -1,16 +1,19 @@
 # -*- coding: utf-8 -*-
 import argparse
 import logging
-
 import numpy as np
 import pandas as pd
 import torch
-from pytorch_lightning import Trainer
+import pytorch_lightning as pl
+from pytorch_lightning import loggers as pl_loggers
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
-from pytorch_lightning.core.lightning import LightningModule
 from torch.utils.data import DataLoader, Dataset
 from transformers.optimization import AdamW, get_cosine_schedule_with_warmup
 from transformers import PreTrainedTokenizerFast, GPT2LMHeadModel
+import os
+import json
+
+# 해야 할 것: args중에서 빠진 게 있는지, 빼야 할 것이 있는지.
 
 parser = argparse.ArgumentParser(description='Simsimi based on KoGPT-2')
 
@@ -19,20 +22,10 @@ parser.add_argument('--chat',
                     default=False,
                     help='response generation on given user input')
 
-parser.add_argument('--sentiment',
-                    type=str,
-                    default='0',
-                    help='sentiment for system. 0 is neutral, 1 is negative, 2 is positive.')
-
 parser.add_argument('--model_params',
                     type=str,
                     default='model_chp/model_-last.ckpt',
                     help='model binary for starting chat')
-
-parser.add_argument('--train',
-                    action='store_true',
-                    default=False,
-                    help='for training')
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -45,15 +38,34 @@ MASK = '<unused0>'
 SENT = '<unused1>'
 PAD = '<pad>'
 
-TOKENIZER = PreTrainedTokenizerFast.from_pretrained("skt/kogpt2-base-v2",
-            bos_token=BOS, eos_token=EOS, unk_token='<unk>',
-            pad_token=PAD, mask_token=MASK) 
+class ArgsBase():
+    @staticmethod
+    def add_model_specific_args(parent_parser):
+        parser = argparse.ArgumentParser(
+            parents=[parent_parser], add_help=False)
+        parser.add_argument('-train_file',
+                            type=str,
+                            default='Chatbot_data/comuchat_fm_train.csv',
+                            help='train file')
+        parser.add_argument('-test_file',
+                            type=str,
+                            default='Chatbot_data/comuchat_fm_valid.csv',
+                            help='test file')
+        parser.add_argument('--batch_size',
+                            type=int,
+                            default=14,
+                            help='')
+        parser.add_argument('--max_seq_len',
+                            type=int,
+                            default=64,
+                            help='max seq len')
+        return parser
 
-
-class CharDataset(Dataset):
-    def __init__(self, chats, max_len=32):
-        self._data = chats
-        self.first = True
+class ChatDataset(Dataset):
+    def __init__(self, filepath, tok_vocab, max_seq_len=64):
+        self.filepath = filepath
+        self._data = pd.read_csv(self.filepath)
+        self.first = False
         self.q_token = U_TKN
         self.a_token = S_TKN
         self.sent_token = SENT
@@ -61,27 +73,26 @@ class CharDataset(Dataset):
         self.eos = EOS
         self.mask = MASK
         self.pad = PAD
-        self.max_len = max_len
-        self.tokenizer = TOKENIZER 
+        self.max_seq_len = max_seq_len
+        self.tokenizer = tok_vocab
 
     def __len__(self):
         return len(self._data)
 
     def __getitem__(self, idx):
-        turn = self._data.iloc[idx]
-        q = turn['Q']
-        a = turn['A']
+        record = self._data.iloc[idx]
+        q, a = record['Q'], record['A']
         q_toked = self.tokenizer.tokenize(self.q_token + q + \
                                           self.sent_token)   
         q_len = len(q_toked)
         a_toked = self.tokenizer.tokenize(self.a_token + a + self.eos)
         a_len = len(a_toked)
-        if q_len + a_len > self.max_len:
-            a_len = self.max_len - q_len
+        if q_len + a_len > self.max_seq_len:
+            a_len = self.max_seq_len - q_len
             if a_len <= 0:
-                q_toked = q_toked[-(int(self.max_len/2)):]
+                q_toked = q_toked[-(int(self.max_seq_len/2)):]
                 q_len = len(q_toked)
-                a_len = self.max_len - q_len
+                a_len = self.max_seq_len - q_len
                 assert a_len > 0
             a_toked = a_toked[:a_len]
             a_len = len(a_toked)
@@ -97,35 +108,88 @@ class CharDataset(Dataset):
             logging.info("toked response : {}".format(a_toked))
             logging.info('labels {}'.format(labels))
             self.first = False
-        mask = [0] * q_len + [1] * a_len + [0] * (self.max_len - q_len - a_len)
-        self.max_len
+        mask = [0] * q_len + [1] * a_len + [0] * (self.max_seq_len - q_len - a_len)
+        self.max_seq_len
         labels_ids = self.tokenizer.convert_tokens_to_ids(labels)
-        while len(labels_ids) < self.max_len:
+        while len(labels_ids) < self.max_seq_len:
             labels_ids += [self.tokenizer.pad_token_id]
         token_ids = self.tokenizer.convert_tokens_to_ids(q_toked + a_toked)
-        while len(token_ids) < self.max_len:
+        while len(token_ids) < self.max_seq_len:
             token_ids += [self.tokenizer.pad_token_id]
         return(token_ids, np.array(mask),
                labels_ids)
 
-
-class KoGPT2Chat(LightningModule):
-    def __init__(self, hparams, **kwargs):
-        super(KoGPT2Chat, self).__init__()
+class ChatDataModule(pl.LightningDataModule):
+    def __init__(self, train_file, test_file, 
+                 tok_vocab, 
+                 max_seq_len=64, 
+                 batch_size=96, 
+                 num_workers=5):
+        super().__init__()
+        self.batch_size = batch_size
+        self.max_seq_len = max_seq_len
+        self.train_file_path = train_file
+        self.test_file_path = test_file
+        self.tok_vocab = tok_vocab
+        self.num_workers = num_workers
+        
+    @staticmethod
+    def add_model_specific_args(parent_parser):
+        parser = argparse.ArgumentParser(
+            parents=[parent_parser], add_help=False)
+        parser.add_argument('--num_workers',
+                            type=int,
+                            default=5,
+                            help='num of worker for dataloader')
+        return parser
+    
+    def setup(self, stage):
+        self.train = ChatDataset(self.train_file_path,
+                                 self.tok_vocab,
+                                 self.max_seq_len)
+        self.test = ChatDataset(self.test_file_path,
+                                self.tok_vocab,
+                                self.max_seq_len)
+          
+    def _collate_fn(self, batch):
+        data = [item[0] for item in batch]
+        mask = [item[1] for item in batch]
+        label = [item[2] for item in batch]
+        return torch.LongTensor(np.array(data)), torch.LongTensor(np.array(mask)), torch.LongTensor(np.array(label))
+        
+    def train_dataloader(self):
+        train = DataLoader(self.train,
+                           batch_size=self.batch_size,
+                           num_workers=self.num_workers, 
+                           shuffle=True,
+                           collate_fn=self._collate_fn)
+        return train
+    
+    def val_dataloader(self):
+        val = DataLoader(self.test,
+                         batch_size=self.batch_size,
+                         num_workers=self.num_workers,
+                         shuffle=False,
+                         collate_fn=self._collate_fn)
+        return val
+    
+    def test_dataloader(self):
+        test = DataLoader(self.test,
+                          batch_size=self.batch_size,
+                          num_workers=self.num_workers, 
+                          shuffle=False,
+                          collate_fn=self._collate_fn)
+        return test
+        
+class Base(pl.LightningModule):
+    def __init__(self, hparams, **kwargs) -> None:
+        super(Base, self).__init__()
         self.hparams = hparams
-        self.neg = -1e18
-        self.kogpt2 = GPT2LMHeadModel.from_pretrained('skt/kogpt2-base-v2')
-        self.loss_function = torch.nn.CrossEntropyLoss(reduction='none')
-
+        
     @staticmethod
     def add_model_specific_args(parent_parser):
         # add model specific args
         parser = argparse.ArgumentParser(parents=[parent_parser], add_help=False)
-        parser.add_argument('--max-len',
-                            type=int,
-                            default=30,
-                            help='max sentence length on input (default: 32)')
-
         parser.add_argument('--batch-size',
                             type=int,
                             default=96,
@@ -138,23 +202,12 @@ class KoGPT2Chat(LightningModule):
                             type=float,
                             default=0.1,
                             help='warmup ratio')
+        parser.add_argument('--model_path',
+                            type=str,
+                            default='skt/kogpt2-base-v2',
+                            help='kobart model path')
         return parser
-
-    def forward(self, inputs):
-        # (batch, seq_len, hiddens)
-        output = self.kogpt2(inputs, return_dict=True)
-        return output.logits
-
-    def training_step(self, batch, batch_idx):
-        token_ids, mask, label = batch
-        out = self(token_ids)
-        mask_3d = mask.unsqueeze(dim=2).repeat_interleave(repeats=out.shape[2], dim=2)
-        mask_out = torch.where(mask_3d == 1, out, self.neg * torch.ones_like(out))
-        loss = self.loss_function(mask_out.transpose(2, 1), label)
-        loss_avg = loss.sum() / mask.sum()
-        self.log('train_loss', loss_avg)
-        return loss_avg
-
+    
     def configure_optimizers(self):
         # Prepare optimizer
         param_optimizer = list(self.named_parameters())
@@ -176,80 +229,107 @@ class KoGPT2Chat(LightningModule):
                         'frequency': 1}
         return [optimizer], [lr_scheduler]
 
-    def _collate_fn(self, batch):
-        data = [item[0] for item in batch]
-        mask = [item[1] for item in batch]
-        label = [item[2] for item in batch]
-        return torch.LongTensor(data), torch.LongTensor(mask), torch.LongTensor(label)
+class KoGPT2Chat(Base):
+    def __init__(self, hparams, **kwargs):
+        super(KoGPT2Chat, self).__init__(hparams, **kwargs)
+        self.model = GPT2LMHeadModel.from_pretrained(self.hparams.model_path)
+        self.model.train()
+        self.neg = -1e18
+        #self.kogpt2 = GPT2LMHeadModel.from_pretrained('skt/kogpt2-base-v2')
+        self.loss_function = torch.nn.CrossEntropyLoss(reduction='none')
 
-    def train_dataloader(self):
-        data = pd.read_csv('Chatbot_data/ChatbotData.csv')
-        self.train_set = CharDataset(data, max_len=self.hparams.max_len)
-        train_dataloader = DataLoader(
-            self.train_set, batch_size=self.hparams.batch_size, num_workers=2,
-            shuffle=True, collate_fn=self._collate_fn)
-        return train_dataloader
+    def forward(self, inputs):
+        # (batch, seq_len, hiddens)
+        output = self.model(inputs, return_dict=True)
+        return output.logits
 
-    def chat(self, sent='0'):
-        tok = TOKENIZER
+    def training_step(self, batch, batch_idx):
+        token_ids, mask, label = batch
+        out = self(token_ids)
+        mask_3d = mask.unsqueeze(dim=2).repeat_interleave(repeats=out.shape[2], dim=2)
+        mask_out = torch.where(mask_3d == 1, out, self.neg * torch.ones_like(out))
+        loss = self.loss_function(mask_out.transpose(2, 1), label)
+        loss_avg = loss.sum() / mask.sum()
+        self.log('train_loss', loss_avg)
+        return loss_avg
+    
+    def validation_step(self, batch, batch_idx):
+        token_ids, mask, label = batch
+        out = self(token_ids)
+        mask_3d = mask.unsqueeze(dim=2).repeat_interleave(repeats=out.shape[2], dim=2)
+        mask_out = torch.where(mask_3d == 1, out, self.neg * torch.ones_like(out))
+        loss = self.loss_function(mask_out.transpose(2, 1), label)
+        loss_avg = loss.sum() / mask.sum()
+        self.log('val_loss', loss_avg)
+        return loss_avg
+    
+    def make_answer(self, text, sent='0'):
+        tok = PreTrainedTokenizerFast.from_pretrained("skt/kogpt2-base-v2",
+            bos_token=BOS, eos_token=EOS, unk_token='<unk>',
+            pad_token=PAD, mask_token=MASK)
         sent_tokens = tok.tokenize(sent)
-        with torch.no_grad():
-            while 1:
-                q = input('user > ').strip()
-                if q == 'quit':
-                    break
-                a = ''
-                while 1:
-                    input_ids = torch.LongTensor(tok.encode(U_TKN + q + SENT + sent + S_TKN + a)).unsqueeze(dim=0)
-                    pred = self(input_ids)
-                    gen = tok.convert_ids_to_tokens(
-                        torch.argmax(
-                            pred,
-                            dim=-1).squeeze().numpy().tolist())[-1]
-                    if gen == EOS:
-                        break
-                    a += gen.replace('▁', ' ')
-                print("Simsimi > {}".format(a.strip()))
-
-
-parser = KoGPT2Chat.add_model_specific_args(parser)
-parser = Trainer.add_argparse_args(parser)
-args = parser.parse_args()
-logging.info(args)
+        while True:
+            input_ids = torch.LongTensor(tok.encode(U_TKN + text + SENT + sent + S_TKN + a)).unsqueeze(dim=0)
+            pred = self(input_ids)
+            gen = tok.convert_ids_to_tokens(
+                torch.argmax(pred, dim=-1).squeeze().numpy().tolist())[-1]
+            if gen == EOS:
+                break
+            a += gen.replace('_', ' ')
+        return a.strip()
+        
+    def chat(self):
+        self.model.eval()
+        while True:
+            q = input('user > ').strip()
+            if q == 'quit':
+                break
+            print(f'Simsimi > {self.make_answer(q)}')
 
 if __name__ == "__main__":
-    if args.train:
-        checkpoint_callback = ModelCheckpoint(
-            dirpath='model_chp',
-            filename='{epoch:02d}-{train_loss:.2f}',
-            verbose=True,
-            save_last=True,
-            monitor='train_loss',
-            mode='min',
-            prefix='model_'
-        )
-        early_stop_callback = EarlyStopping(
-            monitor='train_loss',
-            patience=5,
-            verbose=False,
-            mode='min'
-        )
-        # python train_torch.py --train --gpus 1 --max_epochs 3
-        model = KoGPT2Chat(args)
-        model.train()
-        trainer = Trainer.from_argparse_args(
-            args,
-            checkpoint_callback=checkpoint_callback, 
-            callbacks=[early_stop_callback],
-            gradient_clip_val=1.0)
-        trainer.fit(model)
-        logging.info('best model path {}'.format(checkpoint_callback.best_model_path))
-        
-        model.kogpt2.save_pretrained('model_bin')
+    parser = Base.add_model_specific_args(parser)
+    parser = ArgsBase.add_model_specific_args(parser)
+    parser = ChatDataModule.add_model_specific_args(parser)
+    parser = pl.Trainer.add_argparse_args(parser)
+    args = parser.parse_args()
+    #logging.info(args)
+    
+    dm = ChatDataModule(args.train_file,
+                        args.test_file,
+                        PreTrainedTokenizerFast.from_pretrained("skt/kogpt2-base-v2",
+            bos_token=BOS, eos_token=EOS, unk_token='<unk>',
+            pad_token=PAD, mask_token=MASK) ,
+                        max_seq_len=args.max_seq_len,
+                        num_workers=args.num_workers)
+    early_stop_callback = EarlyStopping(monitor='val_loss',
+                                        patience=5,
+                                        verbose=False,
+                                        mode='min')
+    checkpoint_callback = ModelCheckpoint(monitor='val_loss',
+                                            dirpath=args.default_root_dir,
+                                            filename='model_chp/{epoch:02d}-{val_loss:.3f}',
+                                            verbose=True,
+                                            save_last=True,
+                                            mode='min',
+                                            save_top_k=1,
+                                            prefix='kogpt_chitchat')
+    tb_logger = pl_loggers.TensorBoardLogger(os.path.join(args.default_root_dir, 'tb_logs'))
+    lr_logger = pl.callbacks.LearningRateMonitor()
+    # python train_torch.py --train --gpus 1 --max_epochs 3
+    model = KoGPT2Chat(args)
+    with open('config.json', 'w') as f:
+        json.dump(model.model.config.to_dict(), f, ensure_ascii=False, indent=4)
+    trainer = pl.Trainer.from_argparse_args(
+        args,
+        logger=tb_logger,
+        checkpoint_callback=checkpoint_callback, 
+        callbacks=[lr_logger, early_stop_callback],
+        gradient_clip_val=1.0
+    )
+    trainer.fit(model, dm)
+    logging.info('best model path {}'.format(checkpoint_callback.best_model_path))
+    
+    model.model.save_pretrained('model_bin')
         
     if args.chat:
-        #model = KoGPT2Chat.load_from_checkpoint(args.model_params)
-        model = KoGPT2Chat(args)
-        model.kogpt2 = GPT2LMHeadModel.from_pretrained('./model_bin')
-        
         model.chat()

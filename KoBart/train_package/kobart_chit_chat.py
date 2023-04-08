@@ -16,11 +16,6 @@ import json
 
 parser = argparse.ArgumentParser(description='KoBART Chit-Chat')
 
-
-parser.add_argument('--checkpoint_path',
-                    type=str,
-                    help='checkpoint path')
-
 parser.add_argument('--chat',
                     action='store_true',
                     default=False,
@@ -58,7 +53,6 @@ class ArgsBase():
                             default=30,
                             help='max seq len')
         return parser
-
 
 class ChatDataset(Dataset):
     def __init__(self, filepath, tok_vocab, max_seq_len=128) -> None:
@@ -113,7 +107,6 @@ class ChatDataset(Dataset):
                 'decoder_attention_mask': np.array(decoder_attention_mask, dtype=np.float_),
                 'labels': np.array(labels, dtype=np.int_)}
 
-
 class ChatDataModule(pl.LightningDataModule):
     def __init__(self, train_file,
                  test_file, tok_vocab,
@@ -166,7 +159,6 @@ class ChatDataModule(pl.LightningDataModule):
                           num_workers=self.num_workers, shuffle=False)
         return test
 
-
 class Base(pl.LightningModule):
     def __init__(self, hparams, **kwargs) -> None:
         super(Base, self).__init__()
@@ -175,24 +167,19 @@ class Base(pl.LightningModule):
     @staticmethod
     def add_model_specific_args(parent_parser):
         # add model specific args
-        parser = argparse.ArgumentParser(
-            parents=[parent_parser], add_help=False)
-
+        parser = argparse.ArgumentParser(parents=[parent_parser], add_help=False)
         parser.add_argument('--batch-size',
                             type=int,
                             default=14,
                             help='batch size for training (default: 96)')
-
         parser.add_argument('--lr',
                             type=float,
                             default=5e-5,
                             help='The initial learning rate')
-
         parser.add_argument('--warmup_ratio',
                             type=float,
                             default=0.1,
                             help='warmup ratio')
-
         parser.add_argument('--model_path',
                             type=str,
                             default=None,
@@ -227,7 +214,6 @@ class Base(pl.LightningModule):
                         'frequency': 1}
         return [optimizer], [lr_scheduler]
 
-
 class KoBARTConditionalGeneration(Base):
     def __init__(self, hparams, **kwargs):
         super(KoBARTConditionalGeneration, self).__init__(hparams, **kwargs)
@@ -258,7 +244,7 @@ class KoBARTConditionalGeneration(Base):
         self.log('val_loss', loss, on_step=True, on_epoch=True, prog_bar=True)
 
 
-    def chat(self, text):
+    def make_answer(self, text):
         input_ids =  [self.tokenizer.bos_token_id] + self.tokenizer.encode(text) + [self.tokenizer.eos_token_id]
         res_ids = self.model.generate(torch.tensor([input_ids]),
                                             max_length=self.hparams.max_seq_len,
@@ -267,7 +253,14 @@ class KoBARTConditionalGeneration(Base):
                                             bad_words_ids=[[self.tokenizer.unk_token_id]])        
         a = self.tokenizer.batch_decode(res_ids.tolist())[0]
         return a.replace('<s>', '').replace('</s>', '')
-
+    
+    def chat(self):
+        self.model.eval()
+        while True:
+            q = input('user > ').strip()
+            if q == 'quit':
+                break
+            print("Simsimi > {}".format(self.make_answer(q)))
 
 if __name__ == '__main__':
     parser = Base.add_model_specific_args(parser)
@@ -276,39 +269,39 @@ if __name__ == '__main__':
     parser = pl.Trainer.add_argparse_args(parser)
     args = parser.parse_args()
     logging.info(args)
-
-    model = KoBARTConditionalGeneration(args)
-    with open('config.json', 'w') as f:
-        json.dump(model.model.config.to_dict(), f, ensure_ascii=False, indent=4)
-
+    
     dm = ChatDataModule(args.train_file,
                         args.test_file,
                         os.path.join(args.tokenizer_path, 'model.json'),
                         max_seq_len=args.max_seq_len,
                         num_workers=args.num_workers)
-    early_stop_callback = EarlyStopping(
-        monitor='val_loss',
-        patience=5,
-        verbose=False,
-        mode='min'
-    )
-    checkpoint_callback = pl.callbacks.ModelCheckpoint(monitor='val_loss',
-                                                       dirpath=args.default_root_dir,
-                                                       filename='model_chp/{epoch:02d}-{val_loss:.3f}',
-                                                       verbose=True,
-                                                       save_last=True,
-                                                       mode='min',
-                                                       save_top_k=1,
-                                                       prefix='kobart_chitchat')
+    early_stop_callback = EarlyStopping(monitor='val_loss',
+                                        patience=5,
+                                        verbose=False,
+                                        mode='min')
+    checkpoint_callback = pl.callbacks.ModelCheckpoint(
+                                                        monitor='val_loss',
+                                                        dirpath=args.default_root_dir,
+                                                        filename='model_chp/{epoch:02d}-{val_loss:.3f}',
+                                                        verbose=True,
+                                                        save_last=True,
+                                                        mode='min',
+                                                        save_top_k=1,
+                                                        prefix='kobart_chitchat')
     tb_logger = pl_loggers.TensorBoardLogger(os.path.join(args.default_root_dir, 'tb_logs'))
     lr_logger = pl.callbacks.LearningRateMonitor()
-    trainer = pl.Trainer.from_argparse_args(args, logger=tb_logger,
-                                            callbacks=[checkpoint_callback, lr_logger, early_stop_callback])
+    
+    model = KoBARTConditionalGeneration(args)
+    with open('config.json', 'w') as f:
+        json.dump(model.model.config.to_dict(), f, ensure_ascii=False, indent=4)
+    trainer = pl.Trainer.from_argparse_args(
+        args, 
+        logger=tb_logger, 
+        checkpoint_callback=checkpoint_callback, 
+        callbacks=[lr_logger, early_stop_callback]
+    )
     trainer.fit(model, dm)
+    
+    
     if args.chat:
-        model.model.eval()
-        while 1:
-            q = input('user > ').strip()
-            if q == 'quit':
-                break
-            print("Simsimi > {}".format(model.chat(q)))
+        model.chat()
