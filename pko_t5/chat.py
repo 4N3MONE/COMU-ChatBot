@@ -9,7 +9,7 @@ def model_init(args):
         model = T5ForConditionalGeneration.from_pretrained(args.model_path)        
         tokenizer = T5TokenizerFast.from_pretrained(args.model_path)
         # add tokens
-        tokenizer.add_tokens(["#화자#", "#청자#", "#(남자)청자#", "#(남자)화자#", "#(여자)청자#", "(여자)화자"])
+        tokenizer.add_tokens(["#화자#", "#청자#", "#(남자)청자#", "#(남자)화자#", "#(여자)청자#", "#(여자)화자#"])
         model.resize_token_embeddings(len(tokenizer))
         model.config.max_length = args.max_target_length
         tokenizer.model_max_length = args.max_target_length
@@ -48,7 +48,7 @@ def generate_from_file(model, tokenizer, args):
         
 if __name__ == '__main__':
         parser = argparse.ArgumentParser(description='Hyperparameter for Chat')
-        parser.add_argument('--model_path', default='./experiment1/', type=str,
+        parser.add_argument('--model_path', default='/home/work/COMU-ChatBot/COMU-ChatBot-main/pko_t5/pko_t5_wel_patience10', type=str,
                                                 help='model path for chat') 
         parser.add_argument('--max_input_length', default=64, type=int,
                                                 help='user max input length')
