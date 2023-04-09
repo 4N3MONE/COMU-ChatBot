@@ -5,7 +5,7 @@ from sklearn.model_selection import train_test_split
 # 데이터 불러오기
 def load_data(path):    
     df = pd.read_csv(path)
-    df_train, df_test = train_test_split(df, test_size = 0.1, random_state = 42, stratify = df['src'])
+    df_train, df_test = train_test_split(df, test_size = 0.1, random_state = 42, stratify = df['label']) #src
     df_train = df_train[['Q', 'A']]
     df_train = df_train.reset_index(drop = True)
     df_test = df_test[['Q', 'A']]
