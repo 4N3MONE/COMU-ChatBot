@@ -19,13 +19,21 @@ parser = argparse.ArgumentParser(description='Simsimi based on KoGPT-2')
 
 parser.add_argument('--chat',
                     action='store_true',
-                    default=False,
                     help='response generation on given user input')
 
 parser.add_argument('--model_params',
                     type=str,
                     default='model_chp/model_-last.ckpt',
                     help='model binary for starting chat')
+
+parser.add_argument('--just_extract', action='store_true')
+
+parser.add_argument('--ckpt_path',
+                    type=str,
+                    default='.',)
+parser.add_argument('--pretrained_path',
+                    type=str,
+                    default='.')
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -43,14 +51,10 @@ class ArgsBase():
     def add_model_specific_args(parent_parser):
         parser = argparse.ArgumentParser(
             parents=[parent_parser], add_help=False)
-        parser.add_argument('-train_file',
+        parser.add_argument('--task_prefix',
                             type=str,
-                            default='Chatbot_data/comuchat_fm_train.csv',
-                            help='train file')
-        parser.add_argument('-test_file',
-                            type=str,
-                            default='Chatbot_data/comuchat_fm_valid.csv',
-                            help='test file')
+                            default='.',
+                            help='fxxk you')
         parser.add_argument('--batch_size',
                             type=int,
                             default=14,
@@ -263,11 +267,8 @@ class KoGPT2Chat(Base):
         self.log('val_loss', loss_avg)
         return loss_avg
     
-    def make_answer(self, text, sent='0'):
-        tok = PreTrainedTokenizerFast.from_pretrained("skt/kogpt2-base-v2",
-            bos_token=BOS, eos_token=EOS, unk_token='<unk>',
-            pad_token=PAD, mask_token=MASK)
-        sent_tokens = tok.tokenize(sent)
+    def make_answer(self, text, tok, sent='0'):
+        a = ''
         while True:
             input_ids = torch.LongTensor(tok.encode(U_TKN + text + SENT + sent + S_TKN + a)).unsqueeze(dim=0)
             pred = self(input_ids)
@@ -275,16 +276,30 @@ class KoGPT2Chat(Base):
                 torch.argmax(pred, dim=-1).squeeze().numpy().tolist())[-1]
             if gen == EOS:
                 break
-            a += gen.replace('_', ' ')
+            a += gen.replace('_', ' ').replace('▁', ' ')
         return a.strip()
         
-    def chat(self):
+    def chat(self, sent='0'):
+        tok = PreTrainedTokenizerFast.from_pretrained("skt/kogpt2-base-v2",
+            bos_token=BOS, eos_token=EOS, unk_token='<unk>',
+            pad_token=PAD, mask_token=MASK)
+        sent_tokens = tok.tokenize(sent)
         self.model.eval()
         while True:
             q = input('user > ').strip()
             if q == 'quit':
                 break
-            print(f'Simsimi > {self.make_answer(q)}')
+            print(f'Simsimi > {self.make_answer(q, tok)}')
+            
+def ckpt_to_pretrained(args):
+    model = KoGPT2Chat(args)
+    ckpt = torch.load(args.ckpt_path)
+    model.load_state_dict(ckpt['state_dict'])
+    model.model.save_pretrained(args.pretrained_path)
+    
+def chat(args):
+    model = KoGPT2Chat(args)
+    model.chat()
 
 if __name__ == "__main__":
     parser = Base.add_model_specific_args(parser)
@@ -294,31 +309,44 @@ if __name__ == "__main__":
     args = parser.parse_args()
     #logging.info(args)
     
-    dm = ChatDataModule(args.train_file,
-                        args.test_file,
-                        PreTrainedTokenizerFast.from_pretrained("skt/kogpt2-base-v2",
+    if args.just_extract:
+        ckpt_to_pretrained(args)
+        logging.info('Extraction : END')
+        exit()
+        
+    if args.chat:
+        chat(args)
+        logging.info('Chat with Model : END')
+        exit()
+    tokenizer = PreTrainedTokenizerFast.from_pretrained("skt/kogpt2-base-v2",
             bos_token=BOS, eos_token=EOS, unk_token='<unk>',
-            pad_token=PAD, mask_token=MASK) ,
+            pad_token=PAD, mask_token=MASK)
+    tokenizer.add_tokens(["#화자#", "#청자#", "#(남자)청자#", "#(남자)화자#", "#(여자)청자#", "#(여자)화자#"])
+
+    
+    dm = ChatDataModule('data/' + args.task_prefix + '_train.csv',
+                        'data/' + args.task_prefix + '_valid.csv',
+                        tokenizer,
                         max_seq_len=args.max_seq_len,
                         num_workers=args.num_workers)
     early_stop_callback = EarlyStopping(monitor='val_loss',
-                                        patience=5,
+                                        patience=30,
                                         verbose=False,
                                         mode='min')
     checkpoint_callback = ModelCheckpoint(monitor='val_loss',
-                                            dirpath=args.default_root_dir,
-                                            filename='model_chp/{epoch:02d}-{val_loss:.3f}',
+                                            dirpath=args.task_prefix,
+                                            filename='{epoch:02d}-{val_loss:.3f}',
                                             verbose=True,
-                                            save_last=True,
+                                            save_last=False,
                                             mode='min',
                                             save_top_k=1,
-                                            prefix='kogpt_chitchat')
-    tb_logger = pl_loggers.TensorBoardLogger(os.path.join(args.default_root_dir, 'tb_logs'))
+                                            prefix='')
+    tb_logger = pl_loggers.TensorBoardLogger(os.path.join(args.task_prefix, 'tb_logs'))
     lr_logger = pl.callbacks.LearningRateMonitor()
     # python train_torch.py --train --gpus 1 --max_epochs 3
     model = KoGPT2Chat(args)
-    with open('config.json', 'w') as f:
-        json.dump(model.model.config.to_dict(), f, ensure_ascii=False, indent=4)
+    model.model.resize_token_embeddings(len(tokenizer))
+    
     trainer = pl.Trainer.from_argparse_args(
         args,
         logger=tb_logger,
@@ -328,8 +356,3 @@ if __name__ == "__main__":
     )
     trainer.fit(model, dm)
     logging.info('best model path {}'.format(checkpoint_callback.best_model_path))
-    
-    model.model.save_pretrained('model_bin')
-        
-    if args.chat:
-        model.chat()

@@ -30,19 +30,14 @@ class ArgsBase():
     def add_model_specific_args(parent_parser):
         parser = argparse.ArgumentParser(
             parents=[parent_parser], add_help=False)
-        parser.add_argument('--train_file',
+        parser.add_argument('--task_prefix',
                             type=str,
-                            default='Chatbot_data/train_data_re.csv',
-                            help='train file')
-
-        parser.add_argument('--test_file',
-                            type=str,
-                            default='Chatbot_data/test_data_re.csv',
-                            help='test file')
+                            default='',
+                            help='training goal task')
 
         parser.add_argument('--tokenizer_path',
                             type=str,
-                            default='tokenizer',
+                            default='emji_tokenizer',
                             help='tokenizer')
         parser.add_argument('--batch_size',
                             type=int,
@@ -64,6 +59,7 @@ class ChatDataset(Dataset):
         self.tokenizer = PreTrainedTokenizerFast(
             tokenizer_file=tok_vocab,
             bos_token=self.bos_token, eos_token=self.eos_token, unk_token='<unk>', pad_token='<pad>', mask_token='<mask>')
+        self.tokenizer.add_tokens(["#화자#", "#청자#", "#(남자)청자#", "#(남자)화자#", "#(여자)청자#", "#(여자)화자#"])
 
     def __len__(self):
         return len(self.data)
@@ -182,7 +178,7 @@ class Base(pl.LightningModule):
                             help='warmup ratio')
         parser.add_argument('--model_path',
                             type=str,
-                            default=None,
+                            default='hyunwoongko/kobart',
                             help='kobart model path')
         return parser
 
@@ -224,6 +220,9 @@ class KoBARTConditionalGeneration(Base):
         self.tokenizer = PreTrainedTokenizerFast(
             tokenizer_file=os.path.join(self.hparams.tokenizer_path, 'model.json'),
             bos_token=self.bos_token, eos_token=self.eos_token, unk_token='<unk>', pad_token='<pad>', mask_token='<mask>')
+        
+        self.tokenizer.add_tokens(["#화자#", "#청자#", "#(남자)청자#", "#(남자)화자#", "#(여자)청자#", "#(여자)화자#"])
+        self.model.resize_token_embeddings(len(self.tokenizer))
 
     def forward(self, inputs):
         return self.model(input_ids=inputs['input_ids'],
@@ -269,31 +268,33 @@ if __name__ == '__main__':
     parser = pl.Trainer.add_argparse_args(parser)
     args = parser.parse_args()
     logging.info(args)
+
+    model = KoBARTConditionalGeneration(args)
     
-    dm = ChatDataModule(args.train_file,
-                        args.test_file,
+    if args.chat:
+        model.chat()
+        exit()
+
+    dm = ChatDataModule('data/' + args.task_prefix + '_train.csv',
+                        'data/' + args.task_prefix + '_valid.csv',
                         os.path.join(args.tokenizer_path, 'model.json'),
                         max_seq_len=args.max_seq_len,
                         num_workers=args.num_workers)
     early_stop_callback = EarlyStopping(monitor='val_loss',
-                                        patience=5,
+                                        patience=30,
                                         verbose=False,
                                         mode='min')
     checkpoint_callback = pl.callbacks.ModelCheckpoint(
                                                         monitor='val_loss',
-                                                        dirpath=args.default_root_dir,
-                                                        filename='model_chp/{epoch:02d}-{val_loss:.3f}',
+                                                        dirpath=args.task_prefix,
+                                                        filename='{epoch:02d}-{val_loss:.3f}',
                                                         verbose=True,
-                                                        save_last=True,
+                                                        save_last=False,
                                                         mode='min',
                                                         save_top_k=1,
-                                                        prefix='kobart_chitchat')
-    tb_logger = pl_loggers.TensorBoardLogger(os.path.join(args.default_root_dir, 'tb_logs'))
+                                                        prefix='')
+    tb_logger = pl_loggers.TensorBoardLogger(os.path.join(args.task_prefix, 'tb_logs'))
     lr_logger = pl.callbacks.LearningRateMonitor()
-    
-    model = KoBARTConditionalGeneration(args)
-    with open('config.json', 'w') as f:
-        json.dump(model.model.config.to_dict(), f, ensure_ascii=False, indent=4)
     trainer = pl.Trainer.from_argparse_args(
         args, 
         logger=tb_logger, 
@@ -301,7 +302,3 @@ if __name__ == '__main__':
         callbacks=[lr_logger, early_stop_callback]
     )
     trainer.fit(model, dm)
-    
-    
-    if args.chat:
-        model.chat()
