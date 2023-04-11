@@ -241,7 +241,7 @@ class KoBARTConditionalGeneration(Base):
         outs = self(batch)
         loss = outs['loss']
         self.log('val_loss', loss, on_step=True, on_epoch=True, prog_bar=True)
-
+        return loss
 
     def make_answer(self, text):
         input_ids =  [self.tokenizer.bos_token_id] + self.tokenizer.encode(text) + [self.tokenizer.eos_token_id]
@@ -268,13 +268,7 @@ if __name__ == '__main__':
     parser = pl.Trainer.add_argparse_args(parser)
     args = parser.parse_args()
     logging.info(args)
-
-    model = KoBARTConditionalGeneration(args)
     
-    if args.chat:
-        model.chat()
-        exit()
-
     dm = ChatDataModule('data/' + args.task_prefix + '_train.csv',
                         'data/' + args.task_prefix + '_valid.csv',
                         os.path.join(args.tokenizer_path, 'model.json'),
@@ -286,19 +280,26 @@ if __name__ == '__main__':
                                         mode='min')
     checkpoint_callback = pl.callbacks.ModelCheckpoint(
                                                         monitor='val_loss',
-                                                        dirpath=args.task_prefix,
+                                                        dirpath='noes_' + args.task_prefix,
                                                         filename='{epoch:02d}-{val_loss:.3f}',
                                                         verbose=True,
-                                                        save_last=False,
+                                                        save_last=True,
                                                         mode='min',
-                                                        save_top_k=1,
+                                                        save_top_k=3,
                                                         prefix='')
-    tb_logger = pl_loggers.TensorBoardLogger(os.path.join(args.task_prefix, 'tb_logs'))
+    tb_logger = pl_loggers.TensorBoardLogger(os.path.join('noes_' + args.task_prefix, 'tb_logs'))
     lr_logger = pl.callbacks.LearningRateMonitor()
+    
+    model = KoBARTConditionalGeneration(args)
+    
+    if args.chat:
+        model.chat()
+        exit()
     trainer = pl.Trainer.from_argparse_args(
         args, 
         logger=tb_logger, 
         checkpoint_callback=checkpoint_callback, 
-        callbacks=[lr_logger, early_stop_callback]
+        #callbacks=[lr_logger, early_stop_callback]
+        callbacks=[lr_logger]
     )
     trainer.fit(model, dm)

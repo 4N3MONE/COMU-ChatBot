@@ -2,7 +2,7 @@ from transformers import GPT2LMHeadModel, PreTrainedTokenizerFast
 import torch
 
 class KoGPT2:
-    def __init__(self, model_path, tokenizer_path):
+    def __init__(self, model_path, tokenizer_path="skt/kogpt2-base-v2"):
         self.model = GPT2LMHeadModel.from_pretrained(model_path)
         self.tokenizer = PreTrainedTokenizerFast.from_pretrained(tokenizer_path)
         
@@ -11,8 +11,15 @@ class KoGPT2:
         self.model.resize_token_embeddings(len(self.tokenizer))
         
     def make_answering(self, query):
-        encoded = self.tokenizer.encode(query)
-        input_id = torch.tensor([self.tokenizer.bos_token_id] + encoded + [self.tokenizer.eos_token_id]).unsqueeze(0)
-        output_id = self.model.generate(input_id)
-        answer = self.tokenizer.decode(output_id[0].tolist()[len(encoded) + 1:], skip_special_tokens=True)
+        encoded = self.tokenizer.encode('<usr>' + query + '<unused1>' + '0' + '<sys>')
+        output_id = self.model.generate(torch.tensor(encoded).unsqueeze(0),
+                                        max_length = 30 + len(encoded),
+                                        num_beams=2,
+                                        top_p = 0.5,
+                                        do_sample=True,
+                                        no_repeat_ngram_size=2)
+        output_list = output_id[0].tolist()
+        print(output_list, len(output_list))
+        print(self.tokenizer.decode(output_list, skip_special_tokens=True), end='\t')
+        answer = self.tokenizer.decode(output_id[0].tolist()[len(encoded):], skip_special_tokens=True)
         return answer

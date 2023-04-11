@@ -13,7 +13,7 @@ ml purge
 ml load cuda/11.0
 
 # 활성화된 환경에서 코드 실행.
-python kobart_chit_chat.py --gradient_clip_val 1.0 --max_epochs 100 --gpus 1 --task_prefix wellness
+python kobart_chit_chat.py --gradient_clip_val 1.0 --max_epochs 20 --gpus 1 --task_prefix wellness
 
 echo "###"
 echo "### END DATE=$(date)"

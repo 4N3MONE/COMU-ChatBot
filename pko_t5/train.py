@@ -2,7 +2,7 @@ import argparse
 import torch
 from data import load_data, prepare_data
 from model import init_model
-from transformers import DataCollatorForSeq2Seq, Seq2SeqTrainingArguments, Seq2SeqTrainer, EarlyStoppingCallback
+from transformers import DataCollatorForSeq2Seq, Seq2SeqTrainingArguments, Seq2SeqTrainer
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Hyperparameter for Training T5 for QA')
@@ -25,11 +25,11 @@ if __name__ == '__main__':
                                                 help='weight decay for training')
     parser.add_argument('--steps', default=30000, type=int,
                                                 help='evaluation, logging, saving step for training')                                            
-    parser.add_argument('--model_name', default='paust/pko-t5-large', type=str,
+    parser.add_argument('--model_name', default='paust/pko-t5-base', type=str,
                                                 help='model name for saving')
-    parser.add_argument('--base_path', default='../data/ChatbotData.csv', type=str,
+    parser.add_argument('--base_path', default='./data/comuchat.csv', type=str,
                                                 help='dataset path')
-    parser.add_argument('--model_path', default='./pko_t5_wel_patience10', type=str,
+    parser.add_argument('--model_path', default='./pko_t5_experiment1', type=str,
                                                 help='model path for saving')
     args = parser.parse_args()
 
@@ -37,14 +37,14 @@ if __name__ == '__main__':
     df_train, df_test = load_data(args.base_path)
     
     # Load model & tokenizer
-    # model_name = 'paust/pko-t5-large'
+    # model_name = 'paust/pko-t5-base'
     tokenizer, model = init_model(args.model_name)
     
     # tokenizer에 넣기
     training_set = prepare_data(df_train, tokenizer, args)
     test_set = prepare_data(df_test, tokenizer, args)
     # set device
-    device = 'cuda:0' if torch.cuda.is_available() else 'cpu' #torch.device('cuda:3')
+    device = 'cuda:3' if torch.cuda.is_available() else 'cpu' #torch.device('cuda:3')
     
     model.to(device)
     
@@ -56,8 +56,8 @@ if __name__ == '__main__':
     training_args = Seq2SeqTrainingArguments(
         output_dir = args.model_path,
         save_total_limit=1,
-        evaluation_strategy = 'epoch', #"steps"
-        eval_steps = 1000,
+        early_stopping_patience=5,
+        evaluation_strategy = "epoch",
         num_train_epochs=args.num_train_epochs,
         per_device_train_batch_size=args.train_batch_size,
         save_steps=1000,
@@ -65,7 +65,7 @@ if __name__ == '__main__':
         weight_decay=args.wd,
         warmup_steps=3000,
         logging_steps=1000,
-        save_strategy="epoch", #"steps"
+        save_strategy="no",
         load_best_model_at_end=True,
         metric_for_best_model="eval_loss", 
     )
@@ -77,7 +77,6 @@ if __name__ == '__main__':
         eval_dataset=test_set,
         data_collator=data_collator,
         tokenizer=tokenizer,
-        callbacks = [EarlyStoppingCallback(early_stopping_patience=10)]
     )
     # Training
     print('Start Training...')  
@@ -87,3 +86,4 @@ if __name__ == '__main__':
     # Saving model
     print('Saving Model...')
     trainer.save_model()
+    

@@ -294,11 +294,17 @@ class KoGPT2Chat(Base):
 def ckpt_to_pretrained(args):
     model = KoGPT2Chat(args)
     ckpt = torch.load(args.ckpt_path)
+    tokenizer = PreTrainedTokenizerFast.from_pretrained("skt/kogpt2-base-v2",
+            bos_token=BOS, eos_token=EOS, unk_token='<unk>',
+            pad_token=PAD, mask_token=MASK)
+    tokenizer.add_tokens(["#화자#", "#청자#", "#(남자)청자#", "#(남자)화자#", "#(여자)청자#", "#(여자)화자#"])
+    model.model.resize_token_embeddings(len(tokenizer))
     model.load_state_dict(ckpt['state_dict'])
     model.model.save_pretrained(args.pretrained_path)
     
 def chat(args):
     model = KoGPT2Chat(args)
+    model.model.resize_token_embeddings(len(tokenizer))
     model.chat()
 
 if __name__ == "__main__":
@@ -337,10 +343,12 @@ if __name__ == "__main__":
                                             dirpath=args.task_prefix,
                                             filename='{epoch:02d}-{val_loss:.3f}',
                                             verbose=True,
-                                            save_last=False,
+                                            save_last=True,
                                             mode='min',
-                                            save_top_k=1,
-                                            prefix='')
+                                            #save_top_k=1,
+                                            #prefix='',
+                                            period=5
+                                            )
     tb_logger = pl_loggers.TensorBoardLogger(os.path.join(args.task_prefix, 'tb_logs'))
     lr_logger = pl.callbacks.LearningRateMonitor()
     # python train_torch.py --train --gpus 1 --max_epochs 3
@@ -351,7 +359,8 @@ if __name__ == "__main__":
         args,
         logger=tb_logger,
         checkpoint_callback=checkpoint_callback, 
-        callbacks=[lr_logger, early_stop_callback],
+        callbacks=[lr_logger],
+        #callbacks=[lr_logger, early_stop_callback],
         gradient_clip_val=1.0
     )
     trainer.fit(model, dm)

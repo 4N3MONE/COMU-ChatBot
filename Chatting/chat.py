@@ -10,7 +10,7 @@ def sequancially_chat(chatbot):
         query = input('대화를 입력하세요: ').strip()
         if query == 'q':
             break
-        answer = chatbot.chat('₩청자₩ ' +query)
+        answer = chatbot.make_answering('#청자# ' +query) # 
         print(f'chatbot: {answer}')
     return
 
@@ -28,7 +28,8 @@ def generate_from_file(chatbot, input_file_path, output_file_path):
     result_df.to_csv(output_file_path, encoding='utf-8-sig', index=False)
 
 if __name__=='__main__':
-    chatbot = KoGPT2()
-    #sequancially_chat(chatbot)
+    chatbot = KoBART(model_path='bin/noes_b_kobart_comuchat')
+    chatbot.add_tokens()
+    sequancially_chat(chatbot)
     #generate_from_file(chatbot, 'temp.txt', 'temp_output.txt')
     #result = iteratively_generate(chatbot, input_texts)
